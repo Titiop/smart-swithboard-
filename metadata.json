@@ -1,0 +1,6 @@
+{
+  "name": "Smart Switchboard",
+  "description": "Native remote control for 4-relay ESP8266 smart switchboards via Firebase Realtime Database with live sync, scenes, tiles, and widget.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

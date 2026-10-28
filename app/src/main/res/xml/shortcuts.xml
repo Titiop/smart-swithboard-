@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="shortcut_all_on"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_power_on"
+        android:shortcutShortLabel="@string/shortcut_all_on_short"
+        android:shortcutLongLabel="@string/shortcut_all_on_long">
+        <intent
+            android:action="com.smartswitchboard.action.ALL_ON"
+            android:targetPackage="com.smartswitchboard.app"
+            android:targetClass="com.example.shortcuts.ShortcutTrampolineActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="shortcut_all_off"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_power_off"
+        android:shortcutShortLabel="@string/shortcut_all_off_short"
+        android:shortcutLongLabel="@string/shortcut_all_off_long">
+        <intent
+            android:action="com.smartswitchboard.action.ALL_OFF"
+            android:targetPackage="com.smartswitchboard.app"
+            android:targetClass="com.example.shortcuts.ShortcutTrampolineActivity" />
+    </shortcut>
+</shortcuts>
