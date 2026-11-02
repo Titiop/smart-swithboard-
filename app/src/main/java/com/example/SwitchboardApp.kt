@@ -3,6 +3,7 @@ package com.example
 import android.app.Application
 import android.content.Context
 import com.example.data.PreferencesRepository
+import com.example.data.model.FirebaseProjectConfig
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import kotlinx.coroutines.flow.first
@@ -17,9 +18,29 @@ class SwitchboardApp : Application() {
 
     private fun ensureFirebaseInitialized() {
         try {
-            val customConfig = runCatching {
-                runBlocking { PreferencesRepository(this@SwitchboardApp).firebaseConfigFlow.first() }
-            }.getOrNull()
+            val bootPrefs = getSharedPreferences(BOOT_PREFS_NAME, Context.MODE_PRIVATE)
+            val isMigrated = bootPrefs.getBoolean(KEY_MIGRATED, false)
+
+            val customConfig: FirebaseProjectConfig? = if (isMigrated) {
+                FirebaseProjectConfig(
+                    apiKey = bootPrefs.getString(KEY_API_KEY, "") ?: "",
+                    projectId = bootPrefs.getString(KEY_PROJECT_ID, "") ?: "",
+                    databaseUrl = bootPrefs.getString(KEY_DATABASE_URL, "") ?: ""
+                )
+            } else {
+                val migratedConfig = runCatching {
+                    runBlocking { PreferencesRepository(this@SwitchboardApp).firebaseConfigFlow.first() }
+                }.getOrNull()
+
+                bootPrefs.edit()
+                    .putString(KEY_API_KEY, migratedConfig?.apiKey?.trim() ?: "")
+                    .putString(KEY_PROJECT_ID, migratedConfig?.projectId?.trim() ?: "")
+                    .putString(KEY_DATABASE_URL, migratedConfig?.databaseUrl?.trim() ?: "")
+                    .putBoolean(KEY_MIGRATED, true)
+                    .apply()
+
+                migratedConfig
+            }
 
             if (customConfig != null && customConfig.isCustomConfigured) {
                 configureFirebase(
@@ -43,6 +64,29 @@ class SwitchboardApp : Application() {
     }
 
     companion object {
+        const val BOOT_PREFS_NAME = "firebase_boot"
+        const val KEY_API_KEY = "apiKey"
+        const val KEY_PROJECT_ID = "projectId"
+        const val KEY_DATABASE_URL = "databaseUrl"
+        const val KEY_MIGRATED = "migrated"
+
+        fun saveBootConfig(
+            context: Context,
+            apiKey: String,
+            projectId: String,
+            databaseUrl: String
+        ) {
+            try {
+                context.getSharedPreferences(BOOT_PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(KEY_API_KEY, apiKey.trim())
+                    .putString(KEY_PROJECT_ID, projectId.trim())
+                    .putString(KEY_DATABASE_URL, databaseUrl.trim())
+                    .putBoolean(KEY_MIGRATED, true)
+                    .apply()
+            } catch (_: Exception) {}
+        }
+
         fun configureFirebase(
             context: Context,
             apiKey: String,
@@ -55,6 +99,8 @@ class SwitchboardApp : Application() {
                 val cleanDbUrl = databaseUrl.trim().ifBlank {
                     "https://$cleanProjectId-default-rtdb.firebaseio.com"
                 }
+
+                saveBootConfig(context, cleanKey, cleanProjectId, cleanDbUrl)
 
                 val options = FirebaseOptions.Builder()
                     .setApplicationId(context.packageName)

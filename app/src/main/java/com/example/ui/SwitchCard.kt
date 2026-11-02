@@ -56,7 +56,8 @@ fun SwitchCard(
     isEnabled: Boolean,
     onToggle: () -> Unit,
     onLongPress: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    timerLabel: String? = null
 ) {
     val extraColors = LocalSwitchboardColors.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -210,6 +211,19 @@ fun SwitchCard(
                         fontWeight = FontWeight.Bold,
                         color = if (relay.isOn) extraColors.brandAccent else extraColors.textSecondary
                     )
+                    if (!timerLabel.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = timerLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = extraColors.brandAccent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("switch_timer_label_${relay.id}")
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))

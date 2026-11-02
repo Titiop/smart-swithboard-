@@ -47,41 +47,6 @@ class SwitchboardWidgetProvider : AppWidgetProvider() {
         }
     }
 
-    override fun onReceive(context: Context, intent: Intent) {
-        super.onReceive(context, intent)
-        if (intent.action == ACTION_TOGGLE_RELAY) {
-            val relayId = intent.getIntExtra(EXTRA_RELAY_ID, 1)
-            handleRelayToggle(context, relayId)
-        }
-    }
-
-    private fun handleRelayToggle(context: Context, relayId: Int) {
-        val auth = try { FirebaseAuth.getInstance() } catch (_: Exception) { null }
-        if (auth?.currentUser == null) {
-            Toast.makeText(context, "Please open Smart Switchboard and sign in", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        CoroutineScope(Dispatchers.Main).launch {
-            try {
-                val prefs = PreferencesRepository(context)
-                val boardId = prefs.preferencesFlow.first().boardId
-                val ref = FirebaseDatabase.getInstance().getReference(boardId).child("relay$relayId")
-
-                val currentSnap = ref.get().await()
-                val currentVal = currentSnap.getValue(Boolean::class.java) ?: false
-                val targetVal = !currentVal
-
-                ref.setValue(targetVal).await()
-
-                // Refresh widgets immediately
-                updateAllWidgets(context)
-            } catch (e: Exception) {
-                Toast.makeText(context, "Widget toggle failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
     private fun updateWidgetView(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
         val views = RemoteViews(context.packageName, R.layout.widget_switchboard)
 
@@ -152,7 +117,7 @@ class SwitchboardWidgetProvider : AppWidgetProvider() {
             if (isOn) R.drawable.widget_btn_on else R.drawable.widget_btn_off
         )
 
-        val toggleIntent = Intent(context, SwitchboardWidgetProvider::class.java).apply {
+        val toggleIntent = Intent(context, WidgetToggleReceiver::class.java).apply {
             action = ACTION_TOGGLE_RELAY
             putExtra(EXTRA_RELAY_ID, relayId)
         }

@@ -41,7 +41,9 @@ data class AppPreferences(
     val dynamicColor: Boolean = false,
     val hapticFeedback: Boolean = true,
     val biometricLockEnabled: Boolean = false,
-    val boardId: String = "switchboard1"
+    val boardId: String = "switchboard1",
+    val hideRecentPreview: Boolean = false,
+    val requireExternalUnlock: Boolean = false
 )
 
 data class FirebaseProjectConfig(

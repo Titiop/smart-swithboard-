@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -41,17 +42,34 @@ class MainActivity : FragmentActivity() {
             val appPreferences by viewModel.appPreferences.collectAsStateWithLifecycle()
             val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
             val isLoggedIn by viewModel.isLoggedIn.collectAsStateWithLifecycle()
+            val isDemoMode by viewModel.isDemoMode.collectAsStateWithLifecycle()
             val displayUserEmail by viewModel.displayUserEmail.collectAsStateWithLifecycle()
             val isLoggingIn by viewModel.isLoggingIn.collectAsStateWithLifecycle()
             val loginError by viewModel.loginError.collectAsStateWithLifecycle()
             val switches by viewModel.switches.collectAsStateWithLifecycle()
+            val switchVisibility by viewModel.switchVisibility.collectAsStateWithLifecycle()
+            val savedBoards by viewModel.savedBoards.collectAsStateWithLifecycle()
             val scenes by viewModel.scenes.collectAsStateWithLifecycle()
             val isConnected by viewModel.isConnected.collectAsStateWithLifecycle()
             val boardStatus by viewModel.boardStatus.collectAsStateWithLifecycle()
             val isAppLocked by viewModel.isAppLocked.collectAsStateWithLifecycle()
             val firebaseConfig by viewModel.firebaseConfig.collectAsStateWithLifecycle()
+            val schedules by viewModel.schedules.collectAsStateWithLifecycle()
+            val timers by viewModel.timers.collectAsStateWithLifecycle()
+            val serverTimeOffsetMs by viewModel.serverTimeOffsetMs.collectAsStateWithLifecycle()
 
             val snackbarHostState = remember { SnackbarHostState() }
+
+            LaunchedEffect(appPreferences.hideRecentPreview) {
+                if (appPreferences.hideRecentPreview) {
+                    window.setFlags(
+                        WindowManager.LayoutParams.FLAG_SECURE,
+                        WindowManager.LayoutParams.FLAG_SECURE
+                    )
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
 
             LaunchedEffect(Unit) {
                 viewModel.snackbarEvents.collect { event ->
@@ -138,6 +156,63 @@ class MainActivity : FragmentActivity() {
                             },
                             onLogout = {
                                 viewModel.logout()
+                            },
+                            switchVisibility = switchVisibility,
+                            onUpdateSwitchVisibility = { id, visible ->
+                                viewModel.updateSwitchVisibility(id, visible)
+                            },
+                            savedBoards = savedBoards,
+                            onAddSavedBoard = { boardId ->
+                                viewModel.addSavedBoard(boardId)
+                            },
+                            onRemoveSavedBoard = { boardId ->
+                                viewModel.removeSavedBoard(boardId)
+                            },
+                            isDemoMode = isDemoMode,
+                            onFetchBoardInfo = { boardId ->
+                                viewModel.fetchBoardInfo(boardId)
+                            },
+                            onExportBackup = {
+                                viewModel.exportBackupJson()
+                            },
+                            onRestoreBackup = { payload ->
+                                viewModel.restoreBackup(payload)
+                            },
+                            onShowMessage = { msg ->
+                                viewModel.showMessage(msg)
+                            },
+                            schedules = schedules,
+                            timers = timers,
+                            serverTimeOffsetMs = serverTimeOffsetMs,
+                            onSchedulesSheetOpenChange = { open ->
+                                viewModel.setSchedulesSheetOpen(open)
+                            },
+                            onSaveSchedule = { item, isNew ->
+                                viewModel.saveSchedule(item, isNew)
+                            },
+                            onToggleScheduleEnabled = { item, enabled ->
+                                viewModel.toggleScheduleEnabled(item, enabled)
+                            },
+                            onDeleteSchedule = { id ->
+                                viewModel.deleteSchedule(id)
+                            },
+                            onStartRelayTimer = { relayId, action, minutes ->
+                                viewModel.startRelayTimer(relayId, action, minutes)
+                            },
+                            onCancelRelayTimer = { relayId ->
+                                viewModel.cancelRelayTimer(relayId)
+                            },
+                            onFetchAutoOffMinutes = { relayId ->
+                                viewModel.fetchAutoOffMinutes(relayId)
+                            },
+                            onSaveAutoOffMinutes = { relayId, minutes ->
+                                viewModel.saveAutoOffMinutes(relayId, minutes)
+                            },
+                            onHideRecentPreviewChange = { enabled ->
+                                viewModel.updateHideRecentPreview(enabled)
+                            },
+                            onRequireExternalUnlockChange = { enabled ->
+                                viewModel.updateRequireExternalUnlock(enabled)
                             }
                         )
                     }

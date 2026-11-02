@@ -38,7 +38,7 @@
         <!-- Transparent Trampoline for Static Shortcuts -->
         <activity
             android:name=".shortcuts.ShortcutTrampolineActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.Trampoline"
             android:excludeFromRecents="true"
             android:noHistory="true">
@@ -100,12 +100,24 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="com.smartswitchboard.action.TOGGLE_RELAY" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/switchboard_widget_info" />
         </receiver>
+
+        <!-- Non-exported Receiver for Widget Relay Toggles -->
+        <receiver
+            android:name=".widget.WidgetToggleReceiver"
+            android:exported="false" />
+
+        <!-- Non-exported Transparent FragmentActivity for Biometric Widget Toggles -->
+        <activity
+            android:name=".widget.WidgetToggleAuthActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Trampoline"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
 
     </application>
 

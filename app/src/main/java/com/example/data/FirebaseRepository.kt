@@ -1,6 +1,8 @@
 package com.example.data
 
 import com.example.data.model.BoardStatus
+import com.example.data.model.RelayTimerInfo
+import com.example.data.model.ScheduleItem
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.database.DataSnapshot
@@ -8,6 +10,7 @@ import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import java.util.TimeZone
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 
 class FirebaseRepository {
 
@@ -38,6 +42,12 @@ class FirebaseRepository {
     private var activeBoardRef: DatabaseReference? = null
     private var activeBoardListener: ValueEventListener? = null
 
+    private var timersRef: DatabaseReference? = null
+    private var timersListener: ValueEventListener? = null
+
+    private var schedulesRef: DatabaseReference? = null
+    private var schedulesListener: ValueEventListener? = null
+
     private var connectedRef: DatabaseReference? = null
     private var connectedListener: ValueEventListener? = null
 
@@ -48,6 +58,13 @@ class FirebaseRepository {
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
     private val _serverTimeOffsetMs = MutableStateFlow(0L)
+    val serverTimeOffsetMs: StateFlow<Long> = _serverTimeOffsetMs.asStateFlow()
+
+    private val _timers = MutableStateFlow<Map<Int, RelayTimerInfo>>(emptyMap())
+    val timers: StateFlow<Map<Int, RelayTimerInfo>> = _timers.asStateFlow()
+
+    private val _schedules = MutableStateFlow<List<ScheduleItem>>(emptyList())
+    val schedules: StateFlow<List<ScheduleItem>> = _schedules.asStateFlow()
 
     private val _relayStates = MutableStateFlow<Map<String, Boolean>>(
         mapOf("relay1" to false, "relay2" to false, "relay3" to false, "relay4" to false)
@@ -150,6 +167,35 @@ class FirebaseRepository {
 
             ref.addValueEventListener(listener)
             activeBoardListener = listener
+
+            // Attach one listener on /{boardId}_config/timers while the main screen is visible
+            val tRef = db.getReference("${boardId}_config").child("timers")
+            timersRef = tRef
+            val tListener = object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val map = mutableMapOf<Int, RelayTimerInfo>()
+                    for (id in 1..4) {
+                        val node = snapshot.child("relay$id")
+                        if (node.exists()) {
+                            val action = node.child("action").getValue(Boolean::class.java)
+                            val rawAtMs = node.child("atMs").value
+                            val atMs = when (rawAtMs) {
+                                is Number -> rawAtMs.toLong()
+                                is String -> rawAtMs.toLongOrNull()
+                                else -> null
+                            }
+                            if (action != null && atMs != null && atMs > 0L) {
+                                map[id] = RelayTimerInfo(relayId = id, action = action, atMs = atMs)
+                            }
+                        }
+                    }
+                    _timers.value = map
+                }
+
+                override fun onCancelled(error: DatabaseError) {}
+            }
+            tRef.addValueEventListener(tListener)
+            timersListener = tListener
         } catch (_: Exception) {}
     }
 
@@ -158,6 +204,7 @@ class FirebaseRepository {
      */
     fun stopListening() {
         stopBoardListening()
+        stopSchedulesListening()
         stopConnectionListening()
     }
 
@@ -167,6 +214,83 @@ class FirebaseRepository {
         }
         activeBoardListener = null
         activeBoardRef = null
+
+        timersListener?.let { listener ->
+            timersRef?.removeEventListener(listener)
+        }
+        timersListener = null
+        timersRef = null
+    }
+
+    /**
+     * Attach ONE ValueEventListener on /{boardId}_config/schedules only while the Schedules screen is open.
+     */
+    fun startSchedulesListening(boardId: String) {
+        val db = database ?: return
+        stopSchedulesListening()
+        try {
+            val ref = db.getReference("${boardId}_config").child("schedules")
+            schedulesRef = ref
+            val listener = object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val list = mutableListOf<ScheduleItem>()
+                    for (child in snapshot.children) {
+                        val id = child.key ?: continue
+                        val relayRaw = child.child("relay").value
+                        val relay = when (relayRaw) {
+                            is Number -> relayRaw.toInt()
+                            is String -> relayRaw.toIntOrNull()
+                            else -> null
+                        } ?: continue
+                        if (relay !in 1..4) continue
+
+                        val action = child.child("action").getValue(Boolean::class.java) ?: false
+                        val minRaw = child.child("minute").value
+                        val minute = when (minRaw) {
+                            is Number -> minRaw.toInt()
+                            is String -> minRaw.toIntOrNull()
+                            else -> null
+                        } ?: continue
+                        if (minute !in 0..1439) continue
+
+                        val daysRaw = child.child("days").value
+                        val days = when (daysRaw) {
+                            is Number -> daysRaw.toInt()
+                            is String -> daysRaw.toIntOrNull()
+                            else -> 127
+                        } ?: 127
+
+                        val enabled = child.child("enabled").getValue(Boolean::class.java) ?: true
+                        val label = (child.child("label").value?.toString() ?: "").take(30)
+
+                        list.add(
+                            ScheduleItem(
+                                id = id,
+                                relay = relay,
+                                action = action,
+                                minute = minute,
+                                days = days.coerceIn(1, 127),
+                                enabled = enabled,
+                                label = label
+                            )
+                        )
+                    }
+                    _schedules.value = list.sortedBy { it.minute }
+                }
+
+                override fun onCancelled(error: DatabaseError) {}
+            }
+            ref.addValueEventListener(listener)
+            schedulesListener = listener
+        } catch (_: Exception) {}
+    }
+
+    fun stopSchedulesListening() {
+        schedulesListener?.let { listener ->
+            schedulesRef?.removeEventListener(listener)
+        }
+        schedulesListener = null
+        schedulesRef = null
     }
 
     private fun startConnectionListening() {
@@ -301,6 +425,200 @@ class FirebaseRepository {
             )
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /**
+     * One-shot read of /{boardId}_config/device for Board Info dialog.
+     */
+    suspend fun fetchBoardDeviceInfo(boardId: String): com.example.ui.BoardDeviceInfo? {
+        val db = database ?: return null
+        return try {
+            withTimeout(8000L) {
+                val snapshot = db.getReference("${boardId}_config").child("device").get().await()
+                if (!snapshot.exists()) return@withTimeout null
+
+                val fw = snapshot.child("fw").value?.toString()
+                val rssiRaw = snapshot.child("rssi").value
+                val rssi = when (rssiRaw) {
+                    is Number -> rssiRaw.toInt()
+                    is String -> rssiRaw.toIntOrNull()
+                    else -> null
+                }
+                val ip = snapshot.child("ip").value?.toString()
+                val uptimeRaw = snapshot.child("uptimeSec").value
+                val uptimeSec = when (uptimeRaw) {
+                    is Number -> uptimeRaw.toLong()
+                    is String -> uptimeRaw.toLongOrNull()
+                    else -> null
+                }
+
+                if (fw == null && rssi == null && ip == null && uptimeSec == null) {
+                    null
+                } else {
+                    com.example.ui.BoardDeviceInfo(
+                        fw = fw,
+                        rssi = rssi,
+                        ip = ip,
+                        uptimeSec = uptimeSec
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Save or update a schedule under /{boardId}_config/schedules/{id} and write tzOffsetMin.
+     */
+    suspend fun saveSchedule(boardId: String, item: ScheduleItem, isNew: Boolean): Result<Unit> {
+        val db = database ?: return Result.failure(IllegalStateException("Database not connected"))
+        if (!_isConnected.value) {
+            return Result.failure(IllegalStateException("No internet connection - cannot save schedule"))
+        }
+        return try {
+            withTimeout(8000L) {
+                val configRef = db.getReference("${boardId}_config")
+                val schedulesNode = configRef.child("schedules")
+                val targetRef = if (isNew || item.id.isBlank()) {
+                    schedulesNode.push()
+                } else {
+                    schedulesNode.child(item.id)
+                }
+                val tzOffsetMin = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60000
+                val schedulePayload = mapOf(
+                    "relay" to item.relay.coerceIn(1, 4),
+                    "action" to item.action,
+                    "minute" to item.minute.coerceIn(0, 1439),
+                    "days" to item.days.coerceIn(1, 127),
+                    "enabled" to item.enabled,
+                    "label" to item.label.trim().take(30)
+                )
+                configRef.child("tzOffsetMin").setValue(tzOffsetMin).await()
+                targetRef.setValue(schedulePayload).await()
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Delete a schedule under /{boardId}_config/schedules/{scheduleId}.
+     */
+    suspend fun deleteSchedule(boardId: String, scheduleId: String): Result<Unit> {
+        val db = database ?: return Result.failure(IllegalStateException("Database not connected"))
+        if (!_isConnected.value) {
+            return Result.failure(IllegalStateException("No internet connection - cannot delete schedule"))
+        }
+        return try {
+            withTimeout(8000L) {
+                val configRef = db.getReference("${boardId}_config")
+                val tzOffsetMin = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60000
+                configRef.child("tzOffsetMin").setValue(tzOffsetMin).await()
+                configRef.child("schedules").child(scheduleId).removeValue().await()
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Start a countdown timer for relay{N} under /{boardId}_config/timers/relay{N}.
+     * Uses serverTimeOffsetMs so atMs is in SERVER epoch milliseconds.
+     */
+    suspend fun setRelayTimer(boardId: String, relayId: Int, action: Boolean, minutes: Int): Result<Unit> {
+        val db = database ?: return Result.failure(IllegalStateException("Database not connected"))
+        if (!_isConnected.value) {
+            return Result.failure(IllegalStateException("No internet connection - cannot start timer"))
+        }
+        return try {
+            withTimeout(8000L) {
+                val serverNow = System.currentTimeMillis() + _serverTimeOffsetMs.value
+                val atMs = serverNow + minutes.coerceIn(1, 1440) * 60_000L
+                val payload = mapOf(
+                    "action" to action,
+                    "atMs" to atMs
+                )
+                db.getReference("${boardId}_config")
+                    .child("timers")
+                    .child("relay$relayId")
+                    .setValue(payload)
+                    .await()
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Cancel an active countdown timer by removing /{boardId}_config/timers/relay{N}.
+     */
+    suspend fun cancelRelayTimer(boardId: String, relayId: Int): Result<Unit> {
+        val db = database ?: return Result.failure(IllegalStateException("Database not connected"))
+        if (!_isConnected.value) {
+            return Result.failure(IllegalStateException("No internet connection - cannot cancel timer"))
+        }
+        return try {
+            withTimeout(8000L) {
+                db.getReference("${boardId}_config")
+                    .child("timers")
+                    .child("relay$relayId")
+                    .removeValue()
+                    .await()
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Read /{boardId}_config/autoOff/relay{N} with a single get() when EditSwitchSheet opens.
+     */
+    suspend fun fetchAutoOffMinutes(boardId: String, relayId: Int): Int {
+        val db = database ?: return 0
+        return try {
+            withTimeout(8000L) {
+                val snapshot = db.getReference("${boardId}_config")
+                    .child("autoOff")
+                    .child("relay$relayId")
+                    .get()
+                    .await()
+                val raw = snapshot.value
+                when (raw) {
+                    is Number -> raw.toInt().coerceAtLeast(0)
+                    is String -> (raw.toIntOrNull() ?: 0).coerceAtLeast(0)
+                    else -> 0
+                }
+            }
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    /**
+     * Write /{boardId}_config/autoOff/relay{N} (Int minutes, 0 for Never).
+     */
+    suspend fun setAutoOffMinutes(boardId: String, relayId: Int, minutes: Int): Result<Unit> {
+        val db = database ?: return Result.failure(IllegalStateException("Database not connected"))
+        if (!_isConnected.value) {
+            return Result.failure(IllegalStateException("No internet connection - cannot update auto-off"))
+        }
+        return try {
+            withTimeout(8000L) {
+                db.getReference("${boardId}_config")
+                    .child("autoOff")
+                    .child("relay$relayId")
+                    .setValue(minutes.coerceAtLeast(0))
+                    .await()
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 }

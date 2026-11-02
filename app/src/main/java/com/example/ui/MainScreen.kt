@@ -32,6 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,17 +55,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.model.AppPreferences
 import com.example.data.model.BoardStatus
+import com.example.data.model.RelayTimerInfo
+import com.example.data.model.ScheduleItem
 import com.example.data.model.SceneItem
 import com.example.data.model.SwitchRelay
 import com.example.ui.icons.AppIcons
 import com.example.ui.theme.LocalSwitchboardColors
 import com.example.ui.theme.ThemeMode
+import com.example.util.BackupPayload
 import com.example.util.HapticUtil
+import kotlinx.coroutines.delay
 
 @Composable
 fun MainScreen(
@@ -88,7 +97,30 @@ fun MainScreen(
     onBoardIdChange: (String) -> Unit,
     firebaseConfig: com.example.data.model.FirebaseProjectConfig = com.example.data.model.FirebaseProjectConfig(),
     onSaveFirebaseConfig: (String, String, String) -> Unit = { _, _, _ -> },
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    switchVisibility: Map<Int, Boolean> = mapOf(1 to true, 2 to true, 3 to true, 4 to true),
+    onUpdateSwitchVisibility: (Int, Boolean) -> Unit = { _, _ -> },
+    savedBoards: List<String> = emptyList(),
+    onAddSavedBoard: (String) -> Unit = {},
+    onRemoveSavedBoard: (String) -> Unit = {},
+    isDemoMode: Boolean = false,
+    onFetchBoardInfo: suspend (String) -> BoardDeviceInfo? = { null },
+    onExportBackup: () -> String = { "" },
+    onRestoreBackup: (BackupPayload) -> Unit = {},
+    onShowMessage: (String) -> Unit = {},
+    schedules: List<ScheduleItem> = emptyList(),
+    timers: Map<Int, RelayTimerInfo> = emptyMap(),
+    serverTimeOffsetMs: Long = 0L,
+    onSchedulesSheetOpenChange: (Boolean) -> Unit = {},
+    onSaveSchedule: (ScheduleItem, Boolean) -> Unit = { _, _ -> },
+    onToggleScheduleEnabled: (ScheduleItem, Boolean) -> Unit = { _, _ -> },
+    onDeleteSchedule: (String) -> Unit = {},
+    onStartRelayTimer: (relayId: Int, action: Boolean, minutes: Int) -> Unit = { _, _, _ -> },
+    onCancelRelayTimer: (relayId: Int) -> Unit = {},
+    onFetchAutoOffMinutes: suspend (relayId: Int) -> Int = { 0 },
+    onSaveAutoOffMinutes: (relayId: Int, minutes: Int) -> Unit = { _, _ -> },
+    onHideRecentPreviewChange: (Boolean) -> Unit = {},
+    onRequireExternalUnlockChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val extraColors = LocalSwitchboardColors.current
@@ -98,8 +130,30 @@ fun MainScreen(
     var editingSwitch by remember { mutableStateOf<SwitchRelay?>(null) }
     var showScenesSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showSchedulesSheet by remember { mutableStateOf(false) }
 
-    val activeCount = switches.count { it.isOn }
+    // Update once per minute while visible to compute remaining timer labels
+    var currentTickMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(timers, serverTimeOffsetMs) {
+        while (true) {
+            currentTickMs = System.currentTimeMillis()
+            delay(60_000L)
+        }
+    }
+
+    val estimatedServerNowMs = currentTickMs + serverTimeOffsetMs
+
+    fun computeTimerLabel(relayId: Int): String? {
+        val timer = timers[relayId] ?: return null
+        val remainingMs = timer.atMs - estimatedServerNowMs
+        if (remainingMs <= 0L) return null
+        val remainingMinutes = ((remainingMs + 59_999L) / 60_000L).coerceAtLeast(1L)
+        val actionWord = if (timer.action) "ON" else "OFF"
+        return "$actionWord in $remainingMinutes min"
+    }
+
+    val visibleSwitches = switches.filter { switchVisibility[it.id] != false }
+    val activeCount = visibleSwitches.count { it.isOn }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -137,7 +191,7 @@ fun MainScreen(
 
                     Spacer(modifier = Modifier.height(2.dp))
 
-                    // Summary line under title: "2 of 4 ON" (animated number change)
+                    // Summary line under title: "x of N ON" (animated number change)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         AnimatedContent(
                             targetState = activeCount,
@@ -156,7 +210,7 @@ fun MainScreen(
                             )
                         }
                         Text(
-                            text = " of ${switches.size.coerceAtLeast(4)} ON",
+                            text = " of ${visibleSwitches.size} ON",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Normal,
                             color = extraColors.textSecondary
@@ -188,6 +242,46 @@ fun MainScreen(
                         tint = extraColors.textPrimary,
                         modifier = Modifier.size(24.dp)
                     )
+                }
+            }
+
+            // Saved Boards Quick Switch Chip Row (shown only when more than one board is saved)
+            if (savedBoards.size > 1) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    savedBoards.forEach { boardId ->
+                        val isSelected = boardId == appPreferences.boardId
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                if (!isSelected) {
+                                    HapticUtil.performLightHaptic(context, appPreferences.hapticFeedback)
+                                    onBoardIdChange(boardId)
+                                }
+                            },
+                            label = {
+                                Text(
+                                    text = boardId,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = extraColors.brandAccent,
+                                selectedLabelColor = Color(0xFF0E1013),
+                                containerColor = extraColors.offCard,
+                                labelColor = extraColors.textSecondary
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("saved_board_chip_$boardId")
+                        )
+                    }
                 }
             }
 
@@ -225,31 +319,49 @@ fun MainScreen(
                 }
             }
 
-            // 2x2 Grid of Switch Cards (or 4 columns in landscape)
-            val columns = if (isLandscape) 4 else 2
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(columns),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                items(switches, key = { it.id }) { relay ->
-                    SwitchCard(
-                        relay = relay,
-                        isEnabled = isConnected,
-                        onToggle = {
-                            HapticUtil.performLightHaptic(context, appPreferences.hapticFeedback)
-                            onToggleSwitch(relay)
-                        },
-                        onLongPress = {
-                            editingSwitch = relay
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(150.dp)
+            // 2x2 Grid of Switch Cards (or 4 columns in landscape), or empty state if all hidden
+            if (visibleSwitches.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.all_switches_hidden_empty_state),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = extraColors.textSecondary,
+                        textAlign = TextAlign.Center
                     )
+                }
+            } else {
+                val columns = if (isLandscape) 4 else 2
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    items(visibleSwitches, key = { it.id }) { relay ->
+                        SwitchCard(
+                            relay = relay,
+                            isEnabled = isConnected,
+                            onToggle = {
+                                HapticUtil.performLightHaptic(context, appPreferences.hapticFeedback)
+                                onToggleSwitch(relay)
+                            },
+                            onLongPress = {
+                                editingSwitch = relay
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(150.dp),
+                            timerLabel = computeTimerLabel(relay.id)
+                        )
+                    }
                 }
             }
 
@@ -270,7 +382,7 @@ fun MainScreen(
                         HapticUtil.performLightHaptic(context, appPreferences.hapticFeedback)
                         onSetAllSwitches(true)
                     },
-                    enabled = isConnected,
+                    enabled = isConnected && visibleSwitches.isNotEmpty(),
                     label = { Text("All ON", fontWeight = FontWeight.SemiBold) },
                     leadingIcon = {
                         Icon(
@@ -295,7 +407,7 @@ fun MainScreen(
                         HapticUtil.performLightHaptic(context, appPreferences.hapticFeedback)
                         onSetAllSwitches(false)
                     },
-                    enabled = isConnected,
+                    enabled = isConnected && visibleSwitches.isNotEmpty(),
                     label = { Text("All OFF", fontWeight = FontWeight.SemiBold) },
                     leadingIcon = {
                         Icon(
@@ -372,6 +484,26 @@ fun MainScreen(
             onSave = { name, iconKey ->
                 onUpdateSwitchMeta(relay.id, name, iconKey)
                 editingSwitch = null
+            },
+            initialVisible = switchVisibility[relay.id] ?: true,
+            onSaveVisibility = { visible ->
+                onUpdateSwitchVisibility(relay.id, visible)
+            },
+            isConnected = isConnected,
+            activeTimerLabel = computeTimerLabel(relay.id),
+            onStartTimer = { action, mins ->
+                onStartRelayTimer(relay.id, action, mins)
+                currentTickMs = System.currentTimeMillis()
+            },
+            onCancelTimer = {
+                onCancelRelayTimer(relay.id)
+                currentTickMs = System.currentTimeMillis()
+            },
+            onFetchAutoOffMinutes = {
+                onFetchAutoOffMinutes(relay.id)
+            },
+            onSaveAutoOffMinutes = { mins ->
+                onSaveAutoOffMinutes(relay.id, mins)
             }
         )
     }
@@ -390,6 +522,22 @@ fun MainScreen(
         )
     }
 
+    // Schedules Bottom Sheet (attaches Firebase listener only while open)
+    if (showSchedulesSheet) {
+        SchedulesSheet(
+            schedules = schedules,
+            switches = switches,
+            isConnected = isConnected,
+            onDismiss = {
+                showSchedulesSheet = false
+                onSchedulesSheetOpenChange(false)
+            },
+            onSaveSchedule = onSaveSchedule,
+            onToggleScheduleEnabled = onToggleScheduleEnabled,
+            onDeleteSchedule = onDeleteSchedule
+        )
+    }
+
     // Settings Bottom Sheet
     if (showSettingsSheet) {
         SettingsSheet(
@@ -403,7 +551,24 @@ fun MainScreen(
             onBoardIdChange = onBoardIdChange,
             firebaseConfig = firebaseConfig,
             onSaveFirebaseConfig = onSaveFirebaseConfig,
-            onLogout = onLogout
+            onLogout = onLogout,
+            switches = switches,
+            switchVisibility = switchVisibility,
+            onSwitchVisibilityChange = onUpdateSwitchVisibility,
+            savedBoards = savedBoards,
+            onAddSavedBoard = onAddSavedBoard,
+            onRemoveSavedBoard = onRemoveSavedBoard,
+            isDemoMode = isDemoMode,
+            onFetchBoardInfo = onFetchBoardInfo,
+            onExportBackup = onExportBackup,
+            onRestoreBackup = onRestoreBackup,
+            onShowMessage = onShowMessage,
+            onOpenSchedules = {
+                showSchedulesSheet = true
+                onSchedulesSheetOpenChange(true)
+            },
+            onHideRecentPreviewChange = onHideRecentPreviewChange,
+            onRequireExternalUnlockChange = onRequireExternalUnlockChange
         )
     }
 }

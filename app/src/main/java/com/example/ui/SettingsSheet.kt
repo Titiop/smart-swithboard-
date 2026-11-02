@@ -1,6 +1,8 @@
 package com.example.ui
 
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,13 +49,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.model.AppPreferences
+import com.example.data.model.SwitchRelay
 import com.example.ui.icons.AppIcons
 import com.example.ui.theme.LocalSwitchboardColors
 import com.example.ui.theme.ThemeMode
+import com.example.util.BackupPayload
+import com.example.util.BackupUtil
 import com.example.util.BiometricHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,15 +76,74 @@ fun SettingsSheet(
     onBoardIdChange: (String) -> Unit,
     firebaseConfig: com.example.data.model.FirebaseProjectConfig = com.example.data.model.FirebaseProjectConfig(),
     onSaveFirebaseConfig: (String, String, String) -> Unit = { _, _, _ -> },
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    switches: List<SwitchRelay> = emptyList(),
+    switchVisibility: Map<Int, Boolean> = mapOf(1 to true, 2 to true, 3 to true, 4 to true),
+    onSwitchVisibilityChange: (Int, Boolean) -> Unit = { _, _ -> },
+    savedBoards: List<String> = emptyList(),
+    onAddSavedBoard: (String) -> Unit = {},
+    onRemoveSavedBoard: (String) -> Unit = {},
+    isDemoMode: Boolean = false,
+    onFetchBoardInfo: suspend (String) -> BoardDeviceInfo? = { null },
+    onExportBackup: () -> String = { "" },
+    onRestoreBackup: (BackupPayload) -> Unit = {},
+    onShowMessage: (String) -> Unit = {},
+    onOpenSchedules: () -> Unit = {},
+    onHideRecentPreviewChange: (Boolean) -> Unit = {},
+    onRequireExternalUnlockChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val extraColors = LocalSwitchboardColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showConfigDialog by remember { mutableStateOf(false) }
+    var showBoardInfoDialog by remember { mutableStateOf(false) }
+    var showSavedBoardsDialog by remember { mutableStateOf(false) }
+    var pendingBackupToRestore by remember { mutableStateOf<BackupPayload?>(null) }
     var boardIdInput by remember { mutableStateOf(preferences.boardId) }
+    var boardIdError by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
+
+    LaunchedEffect(preferences.boardId) {
+        boardIdInput = preferences.boardId
+        boardIdError = false
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val json = onExportBackup()
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(json.toByteArray(Charsets.UTF_8))
+                }
+                onShowMessage(context.getString(R.string.backup_exported_success))
+            } catch (_: Exception) {
+                onShowMessage(context.getString(R.string.invalid_backup_file))
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val content = context.contentResolver.openInputStream(uri)?.use { input ->
+                    input.bufferedReader(Charsets.UTF_8).readText()
+                }
+                val parsed = if (content != null) BackupUtil.parseAndValidateBackup(content) else null
+                if (parsed == null) {
+                    onShowMessage(context.getString(R.string.invalid_backup_file))
+                } else {
+                    pendingBackupToRestore = parsed
+                }
+            } catch (_: Exception) {
+                onShowMessage(context.getString(R.string.invalid_backup_file))
+            }
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -201,6 +268,63 @@ fun SettingsSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            // Switches visibility section
+            Text(
+                text = stringResource(R.string.settings_switches_section),
+                style = MaterialTheme.typography.labelLarge,
+                color = extraColors.brandAccent
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            (1..4).forEach { id ->
+                val swName = switches.find { it.id == id }?.name ?: "Switch $id"
+                val isVisible = switchVisibility[id] ?: true
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = swName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = extraColors.textPrimary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = isVisible,
+                        onCheckedChange = { checked -> onSwitchVisibilityChange(id, checked) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF0E1013),
+                            checkedTrackColor = extraColors.brandAccent
+                        ),
+                        modifier = Modifier.testTag("settings_switch_visible_$id")
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OutlinedButton(
+                onClick = {
+                    onDismiss()
+                    onOpenSchedules()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_schedules_button"),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.schedules_title),
+                    color = extraColors.textPrimary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
             // Interactions section
             Text(
                 text = "Interactions & Security",
@@ -273,6 +397,104 @@ fun SettingsSheet(
                 )
             }
 
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Require unlock for widget, tiles and shortcuts (effective when biometric lock is ON)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.require_external_unlock_title),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (preferences.biometricLockEnabled) extraColors.textPrimary else extraColors.textSecondary
+                    )
+                    Text(
+                        text = stringResource(R.string.require_external_unlock_subtitle),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = extraColors.textSecondary
+                    )
+                }
+                Switch(
+                    checked = preferences.requireExternalUnlock,
+                    onCheckedChange = onRequireExternalUnlockChange,
+                    enabled = preferences.biometricLockEnabled,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color(0xFF0E1013),
+                        checkedTrackColor = extraColors.brandAccent
+                    ),
+                    modifier = Modifier.testTag("require_external_unlock_toggle")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Hide app preview in recent apps
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.hide_recent_preview_title),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = extraColors.textPrimary
+                    )
+                    Text(
+                        text = stringResource(R.string.hide_recent_preview_subtitle),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = extraColors.textSecondary
+                    )
+                }
+                Switch(
+                    checked = preferences.hideRecentPreview,
+                    onCheckedChange = onHideRecentPreviewChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color(0xFF0E1013),
+                        checkedTrackColor = extraColors.brandAccent
+                    ),
+                    modifier = Modifier.testTag("hide_recent_preview_toggle")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Backup and restore section
+            Text(
+                text = stringResource(R.string.backup_and_restore_section),
+                style = MaterialTheme.typography.labelLarge,
+                color = extraColors.brandAccent
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { exportLauncher.launch("smart_switchboard_backup.json") },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("backup_export_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(stringResource(R.string.backup_export), color = extraColors.textPrimary)
+                }
+
+                OutlinedButton(
+                    onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("backup_import_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(stringResource(R.string.backup_import), color = extraColors.textPrimary)
+                }
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // Advanced section
@@ -287,10 +509,23 @@ fun SettingsSheet(
                 value = boardIdInput,
                 onValueChange = {
                     boardIdInput = it
-                    onBoardIdChange(it)
+                    val trimmed = it.trim()
+                    if (BackupUtil.isValidBoardId(trimmed)) {
+                        boardIdError = false
+                        onBoardIdChange(trimmed)
+                    } else {
+                        boardIdError = trimmed.isNotEmpty()
+                    }
                 },
+                isError = boardIdError,
                 label = { Text("Board ID (Firebase Path)") },
-                supportingText = { Text("Firebase Realtime Database root node (default: switchboard1)") },
+                supportingText = {
+                    if (boardIdError) {
+                        Text(stringResource(R.string.saved_boards_invalid_id), color = MaterialTheme.colorScheme.error)
+                    } else {
+                        Text("Firebase Realtime Database root node (default: switchboard1)")
+                    }
+                },
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -306,7 +541,34 @@ fun SettingsSheet(
                 )
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { showSavedBoardsDialog = true },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("saved_boards_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(stringResource(R.string.saved_boards_title), color = extraColors.textPrimary)
+                }
+
+                OutlinedButton(
+                    onClick = { showBoardInfoDialog = true },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("board_info_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(stringResource(R.string.board_info_title), color = extraColors.textPrimary)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             OutlinedButton(
                 onClick = { showConfigDialog = true },
@@ -374,6 +636,53 @@ fun SettingsSheet(
             currentConfig = firebaseConfig,
             onDismiss = { showConfigDialog = false },
             onSave = onSaveFirebaseConfig
+        )
+    }
+
+    if (showBoardInfoDialog) {
+        BoardInfoDialog(
+            boardId = preferences.boardId,
+            isDemoMode = isDemoMode,
+            onFetchBoardInfo = onFetchBoardInfo,
+            onDismiss = { showBoardInfoDialog = false }
+        )
+    }
+
+    if (showSavedBoardsDialog) {
+        SavedBoardsDialog(
+            savedBoards = savedBoards,
+            currentBoardId = preferences.boardId,
+            onSelectBoard = { selectedId ->
+                boardIdInput = selectedId
+                onBoardIdChange(selectedId)
+            },
+            onAddBoard = onAddSavedBoard,
+            onRemoveBoard = onRemoveSavedBoard,
+            onDismiss = { showSavedBoardsDialog = false }
+        )
+    }
+
+    pendingBackupToRestore?.let { payload ->
+        AlertDialog(
+            onDismissRequest = { pendingBackupToRestore = null },
+            title = { Text(stringResource(R.string.backup_confirm_title)) },
+            text = { Text(stringResource(R.string.backup_confirm_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRestoreBackup(payload)
+                        pendingBackupToRestore = null
+                        onShowMessage(context.getString(R.string.backup_restored_success))
+                    }
+                ) {
+                    Text("Restore", color = extraColors.brandAccent, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingBackupToRestore = null }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }
