@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -57,7 +58,9 @@ fun SwitchCard(
     onToggle: () -> Unit,
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
-    timerLabel: String? = null
+    timerLabel: String? = null,
+    enabledScheduleCount: Int = 0,
+    onScheduleChipClick: () -> Unit = {}
 ) {
     val extraColors = LocalSwitchboardColors.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -205,12 +208,48 @@ fun SwitchCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = if (relay.isOn) "ON" else "OFF",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (relay.isOn) extraColors.brandAccent else extraColors.textSecondary
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = if (relay.isOn) "ON" else "OFF",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (relay.isOn) extraColors.brandAccent else extraColors.textSecondary
+                        )
+                        if (enabledScheduleCount > 0) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(extraColors.brandAccent.copy(alpha = 0.18f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = extraColors.brandAccent.copy(alpha = 0.45f),
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                    .clickable(onClick = onScheduleChipClick)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .testTag("switch_schedule_chip_${relay.id}")
+                            ) {
+                                Icon(
+                                    imageVector = AppIcons.Alarm,
+                                    contentDescription = "Active schedules",
+                                    tint = extraColors.brandAccent,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Text(
+                                    text = "$enabledScheduleCount",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = extraColors.brandAccent
+                                )
+                            }
+                        }
+                    }
                     if (!timerLabel.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(

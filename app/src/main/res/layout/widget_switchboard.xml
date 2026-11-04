@@ -36,6 +36,7 @@
 
     <!-- 2x2 Grid of Relays -->
     <LinearLayout
+        android:id="@+id/widget_row_top"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
@@ -113,9 +114,10 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/widget_row_bottom"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="6dp"
         android:layout_weight="1"
         android:orientation="horizontal">
 
@@ -189,5 +191,16 @@
                 android:textStyle="bold" />
         </LinearLayout>
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_all_hidden_text"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="@string/all_switches_hidden_toast"
+        android:textColor="#8B93A3"
+        android:textSize="12sp"
+        android:visibility="gone" />
 
 </LinearLayout>

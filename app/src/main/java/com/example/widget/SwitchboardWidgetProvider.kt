@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Build
+import android.view.View
 import android.widget.RemoteViews
 import android.widget.Toast
 import com.example.MainActivity
@@ -61,14 +62,21 @@ class SwitchboardWidgetProvider : AppWidgetProvider() {
         views.setOnClickPendingIntent(R.id.widget_title, openAppPendingIntent)
 
         CoroutineScope(Dispatchers.Main).launch {
-            try {
-                val prefs = PreferencesRepository(context)
-                val names = prefs.switchNamesFlow.first()
-                val boardId = prefs.preferencesFlow.first().boardId
+            val prefs = PreferencesRepository(context)
+            val names = runCatching { prefs.switchNamesFlow.first() }.getOrDefault(emptyMap())
+            val visibility = runCatching { prefs.switchVisibilityFlow.first() }.getOrDefault(emptyMap())
+            val boardId = runCatching { prefs.preferencesFlow.first().boardId }.getOrDefault("switchboard1")
 
+            applyVisibilityLayout(views, visibility)
+
+            try {
                 val auth = try { FirebaseAuth.getInstance() } catch (_: Exception) { null }
                 if (auth?.currentUser == null) {
                     views.setTextViewText(R.id.widget_status, "Sign in required")
+                    bindRelayButton(context, views, 1, names[1] ?: "Switch 1", false, visibility[1] != false, R.id.btn_relay1, R.id.txt_relay1_name, R.id.txt_relay1_state)
+                    bindRelayButton(context, views, 2, names[2] ?: "Switch 2", false, visibility[2] != false, R.id.btn_relay2, R.id.txt_relay2_name, R.id.txt_relay2_state)
+                    bindRelayButton(context, views, 3, names[3] ?: "Switch 3", false, visibility[3] != false, R.id.btn_relay3, R.id.txt_relay3_name, R.id.txt_relay3_state)
+                    bindRelayButton(context, views, 4, names[4] ?: "Switch 4", false, visibility[4] != false, R.id.btn_relay4, R.id.txt_relay4_name, R.id.txt_relay4_state)
                     appWidgetManager.updateAppWidget(appWidgetId, views)
                     return@launch
                 }
@@ -81,21 +89,36 @@ class SwitchboardWidgetProvider : AppWidgetProvider() {
                 val r3 = snapshot.child("relay3").getValue(Boolean::class.java) ?: false
                 val r4 = snapshot.child("relay4").getValue(Boolean::class.java) ?: false
 
-                bindRelayButton(context, views, 1, names[1] ?: "Switch 1", r1, R.id.btn_relay1, R.id.txt_relay1_name, R.id.txt_relay1_state)
-                bindRelayButton(context, views, 2, names[2] ?: "Switch 2", r2, R.id.btn_relay2, R.id.txt_relay2_name, R.id.txt_relay2_state)
-                bindRelayButton(context, views, 3, names[3] ?: "Switch 3", r3, R.id.btn_relay3, R.id.txt_relay3_name, R.id.txt_relay3_state)
-                bindRelayButton(context, views, 4, names[4] ?: "Switch 4", r4, R.id.btn_relay4, R.id.txt_relay4_name, R.id.txt_relay4_state)
+                bindRelayButton(context, views, 1, names[1] ?: "Switch 1", r1, visibility[1] != false, R.id.btn_relay1, R.id.txt_relay1_name, R.id.txt_relay1_state)
+                bindRelayButton(context, views, 2, names[2] ?: "Switch 2", r2, visibility[2] != false, R.id.btn_relay2, R.id.txt_relay2_name, R.id.txt_relay2_state)
+                bindRelayButton(context, views, 3, names[3] ?: "Switch 3", r3, visibility[3] != false, R.id.btn_relay3, R.id.txt_relay3_name, R.id.txt_relay3_state)
+                bindRelayButton(context, views, 4, names[4] ?: "Switch 4", r4, visibility[4] != false, R.id.btn_relay4, R.id.txt_relay4_name, R.id.txt_relay4_state)
 
                 appWidgetManager.updateAppWidget(appWidgetId, views)
             } catch (_: Exception) {
-                // If offline, still bind buttons with fallback
-                bindRelayButton(context, views, 1, "Switch 1", false, R.id.btn_relay1, R.id.txt_relay1_name, R.id.txt_relay1_state)
-                bindRelayButton(context, views, 2, "Switch 2", false, R.id.btn_relay2, R.id.txt_relay2_name, R.id.txt_relay2_state)
-                bindRelayButton(context, views, 3, "Switch 3", false, R.id.btn_relay3, R.id.txt_relay3_name, R.id.txt_relay3_state)
-                bindRelayButton(context, views, 4, "Switch 4", false, R.id.btn_relay4, R.id.txt_relay4_name, R.id.txt_relay4_state)
+                // If offline, still bind visible buttons with fallback
+                bindRelayButton(context, views, 1, names[1] ?: "Switch 1", false, visibility[1] != false, R.id.btn_relay1, R.id.txt_relay1_name, R.id.txt_relay1_state)
+                bindRelayButton(context, views, 2, names[2] ?: "Switch 2", false, visibility[2] != false, R.id.btn_relay2, R.id.txt_relay2_name, R.id.txt_relay2_state)
+                bindRelayButton(context, views, 3, names[3] ?: "Switch 3", false, visibility[3] != false, R.id.btn_relay3, R.id.txt_relay3_name, R.id.txt_relay3_state)
+                bindRelayButton(context, views, 4, names[4] ?: "Switch 4", false, visibility[4] != false, R.id.btn_relay4, R.id.txt_relay4_name, R.id.txt_relay4_state)
                 appWidgetManager.updateAppWidget(appWidgetId, views)
             }
         }
+    }
+
+    private fun applyVisibilityLayout(views: RemoteViews, visibility: Map<Int, Boolean>) {
+        val v1 = visibility[1] != false
+        val v2 = visibility[2] != false
+        val v3 = visibility[3] != false
+        val v4 = visibility[4] != false
+
+        val topRowVisible = v1 || v2
+        val bottomRowVisible = v3 || v4
+        val anyVisible = topRowVisible || bottomRowVisible
+
+        views.setViewVisibility(R.id.widget_row_top, if (topRowVisible) View.VISIBLE else View.GONE)
+        views.setViewVisibility(R.id.widget_row_bottom, if (bottomRowVisible) View.VISIBLE else View.GONE)
+        views.setViewVisibility(R.id.widget_all_hidden_text, if (anyVisible) View.GONE else View.VISIBLE)
     }
 
     private fun bindRelayButton(
@@ -104,10 +127,18 @@ class SwitchboardWidgetProvider : AppWidgetProvider() {
         relayId: Int,
         name: String,
         isOn: Boolean,
+        isVisible: Boolean,
         btnLayoutId: Int,
         nameViewId: Int,
         stateViewId: Int
     ) {
+        if (!isVisible) {
+            views.setViewVisibility(btnLayoutId, View.GONE)
+            views.setOnClickPendingIntent(btnLayoutId, null)
+            return
+        }
+
+        views.setViewVisibility(btnLayoutId, View.VISIBLE)
         views.setTextViewText(nameViewId, name)
         views.setTextViewText(stateViewId, if (isOn) "ON" else "OFF")
         views.setTextColor(stateViewId, if (isOn) Color.parseColor("#3DDC84") else Color.parseColor("#8B93A3"))

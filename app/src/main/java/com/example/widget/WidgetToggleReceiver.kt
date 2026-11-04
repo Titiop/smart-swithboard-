@@ -21,6 +21,11 @@ class WidgetToggleReceiver : BroadcastReceiver() {
 
     companion object {
         suspend fun performRelayToggle(appContext: Context, boardId: String, relayId: Int) {
+            val visibility = runCatching {
+                PreferencesRepository(appContext).switchVisibilityFlow.first()
+            }.getOrDefault(emptyMap())
+            if (visibility[relayId] == false) return
+
             try {
                 withTimeout(8000L) {
                     val ref = FirebaseDatabase.getInstance().getReference(boardId).child("relay$relayId")
@@ -69,6 +74,11 @@ class WidgetToggleReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.Main).launch {
             try {
                 val prefs = PreferencesRepository(appContext)
+                val visibility = prefs.switchVisibilityFlow.first()
+                if (visibility[relayId] == false) {
+                    return@launch
+                }
+
                 val appPrefs = prefs.preferencesFlow.first()
                 if (appPrefs.biometricLockEnabled && appPrefs.requireExternalUnlock) {
                     val authIntent = Intent(appContext, WidgetToggleAuthActivity::class.java).apply {

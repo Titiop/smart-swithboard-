@@ -10,6 +10,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -120,7 +121,12 @@ fun MainScreen(
     onFetchAutoOffMinutes: suspend (relayId: Int) -> Int = { 0 },
     onSaveAutoOffMinutes: (relayId: Int, minutes: Int) -> Unit = { _, _ -> },
     onHideRecentPreviewChange: (Boolean) -> Unit = {},
-    onRequireExternalUnlockChange: (Boolean) -> Unit = {}
+    onRequireExternalUnlockChange: (Boolean) -> Unit = {},
+    onSetSchedulesEnabled: (List<String>, Boolean) -> Unit = { _, _ -> },
+    onDeleteSchedules: (List<String>) -> Unit = {},
+    onRunScheduleNow: (ScheduleItem) -> Unit = {},
+    autoOffMap: Map<Int, Int> = emptyMap(),
+    onAutoOffTabVisibleChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val extraColors = LocalSwitchboardColors.current
@@ -131,6 +137,7 @@ fun MainScreen(
     var showScenesSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showSchedulesSheet by remember { mutableStateOf(false) }
+    var schedulesInitialFilterRelayId by remember { mutableStateOf<Int?>(null) }
 
     // Update once per minute while visible to compute remaining timer labels
     var currentTickMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -147,13 +154,14 @@ fun MainScreen(
         val timer = timers[relayId] ?: return null
         val remainingMs = timer.atMs - estimatedServerNowMs
         if (remainingMs <= 0L) return null
-        val remainingMinutes = ((remainingMs + 59_999L) / 60_000L).coerceAtLeast(1L)
+        val remainingMinutes = ((remainingMs + 59_000L) / 60_000L).coerceAtLeast(1L)
         val actionWord = if (timer.action) "ON" else "OFF"
         return "$actionWord in $remainingMinutes min"
     }
 
     val visibleSwitches = switches.filter { switchVisibility[it.id] != false }
     val activeCount = visibleSwitches.count { it.isOn }
+    val activeSchedulesTotal = remember(schedules) { schedules.count { it.enabled } }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -214,6 +222,26 @@ fun MainScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Normal,
                             color = extraColors.textSecondary
+                        )
+                    }
+
+                    // Tappable "Schedules: X active" line (hidden when 0 enabled schedules)
+                    if (activeSchedulesTotal > 0) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Schedules: $activeSchedulesTotal active",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = extraColors.brandAccent,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable {
+                                    schedulesInitialFilterRelayId = null
+                                    showSchedulesSheet = true
+                                    onSchedulesSheetOpenChange(true)
+                                }
+                                .padding(vertical = 1.dp)
+                                .testTag("main_active_schedules_summary")
                         )
                     }
 
@@ -346,6 +374,9 @@ fun MainScreen(
                         .fillMaxWidth()
                 ) {
                     items(visibleSwitches, key = { it.id }) { relay ->
+                        val enabledCountForRelay = remember(schedules, relay.id) {
+                            schedules.count { it.relay == relay.id && it.enabled }
+                        }
                         SwitchCard(
                             relay = relay,
                             isEnabled = isConnected,
@@ -359,7 +390,13 @@ fun MainScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(150.dp),
-                            timerLabel = computeTimerLabel(relay.id)
+                            timerLabel = computeTimerLabel(relay.id),
+                            enabledScheduleCount = enabledCountForRelay,
+                            onScheduleChipClick = {
+                                schedulesInitialFilterRelayId = relay.id
+                                showSchedulesSheet = true
+                                onSchedulesSheetOpenChange(true)
+                            }
                         )
                     }
                 }
@@ -504,7 +541,17 @@ fun MainScreen(
             },
             onSaveAutoOffMinutes = { mins ->
                 onSaveAutoOffMinutes(relay.id, mins)
-            }
+            },
+            onTurnOffSwitch = {
+                if (relay.isOn) {
+                    onToggleSwitch(relay)
+                }
+            },
+            schedules = schedules,
+            allSwitches = switches,
+            onSaveSchedule = onSaveSchedule,
+            onToggleScheduleEnabled = onToggleScheduleEnabled,
+            onDeleteSchedule = onDeleteSchedule
         )
     }
 
@@ -518,11 +565,12 @@ fun MainScreen(
             onApplyScene = onApplyScene,
             onSaveScene = onSaveScene,
             onDeleteScene = onDeleteScene,
-            onMoveScene = onMoveScene
+            onMoveScene = onMoveScene,
+            switchVisibility = switchVisibility
         )
     }
 
-    // Schedules Bottom Sheet (attaches Firebase listener only while open)
+    // Schedules Bottom Sheet
     if (showSchedulesSheet) {
         SchedulesSheet(
             schedules = schedules,
@@ -530,11 +578,24 @@ fun MainScreen(
             isConnected = isConnected,
             onDismiss = {
                 showSchedulesSheet = false
+                schedulesInitialFilterRelayId = null
                 onSchedulesSheetOpenChange(false)
             },
             onSaveSchedule = onSaveSchedule,
             onToggleScheduleEnabled = onToggleScheduleEnabled,
-            onDeleteSchedule = onDeleteSchedule
+            onDeleteSchedule = onDeleteSchedule,
+            switchVisibility = switchVisibility,
+            boardStatus = boardStatus,
+            onSetSchedulesEnabled = onSetSchedulesEnabled,
+            onDeleteSchedules = onDeleteSchedules,
+            onRunScheduleNow = onRunScheduleNow,
+            initialSelectedRelayFilter = schedulesInitialFilterRelayId,
+            timers = timers,
+            serverTimeOffsetMs = serverTimeOffsetMs,
+            onCancelRelayTimer = onCancelRelayTimer,
+            autoOffMap = autoOffMap,
+            onAutoOffTabVisibleChange = onAutoOffTabVisibleChange,
+            onSaveAutoOffMinutes = onSaveAutoOffMinutes
         )
     }
 
@@ -564,6 +625,7 @@ fun MainScreen(
             onRestoreBackup = onRestoreBackup,
             onShowMessage = onShowMessage,
             onOpenSchedules = {
+                schedulesInitialFilterRelayId = null
                 showSchedulesSheet = true
                 onSchedulesSheetOpenChange(true)
             },

@@ -57,6 +57,7 @@ class MainActivity : FragmentActivity() {
             val schedules by viewModel.schedules.collectAsStateWithLifecycle()
             val timers by viewModel.timers.collectAsStateWithLifecycle()
             val serverTimeOffsetMs by viewModel.serverTimeOffsetMs.collectAsStateWithLifecycle()
+            val autoOffMap by viewModel.autoOffMap.collectAsStateWithLifecycle()
 
             val snackbarHostState = remember { SnackbarHostState() }
 
@@ -213,6 +214,19 @@ class MainActivity : FragmentActivity() {
                             },
                             onRequireExternalUnlockChange = { enabled ->
                                 viewModel.updateRequireExternalUnlock(enabled)
+                            },
+                            onSetSchedulesEnabled = { ids, enabled ->
+                                viewModel.setSchedulesEnabled(ids, enabled)
+                            },
+                            onDeleteSchedules = { ids ->
+                                viewModel.deleteSchedules(ids)
+                            },
+                            onRunScheduleNow = { schedule ->
+                                viewModel.runScheduleNow(schedule)
+                            },
+                            autoOffMap = autoOffMap,
+                            onAutoOffTabVisibleChange = { visible ->
+                                viewModel.setAutoOffTabVisible(visible)
                             }
                         )
                     }

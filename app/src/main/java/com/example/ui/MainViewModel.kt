@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -125,6 +126,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (isDemo) demo else remote
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
+    val autoOffMap: StateFlow<Map<Int, Int>> = combine(
+        firebaseRepo.autoOffMap,
+        _demoAutoOff,
+        _isDemoMode
+    ) { remote, demo, isDemo ->
+        val source = if (isDemo) demo else remote
+        mapOf(
+            1 to (source[1] ?: 0),
+            2 to (source[2] ?: 0),
+            3 to (source[3] ?: 0),
+            4 to (source[4] ?: 0)
+        )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        mapOf(1 to 0, 2 to 0, 3 to 0, 4 to 0)
+    )
+
     // Optimistic pending updates (set of relayKeys currently awaiting server acknowledgment)
     private val _pendingRelays = MutableStateFlow<Set<String>>(emptySet())
     val pendingRelays: StateFlow<Set<String>> = _pendingRelays.asStateFlow()
@@ -184,6 +203,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Active listening flags
     private var isVisible = false
     private var isSchedulesOpen = false
+    private var isAutoOffTabVisible = false
 
     init {
         // Collect auth state changes
@@ -194,8 +214,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (user != null && isVisible) {
                         val boardId = appPreferences.value.boardId
                         firebaseRepo.startListening(boardId)
-                        if (isSchedulesOpen) {
-                            firebaseRepo.startSchedulesListening(boardId)
+                        firebaseRepo.startSchedulesListening(boardId)
+                        if (isAutoOffTabVisible) {
+                            firebaseRepo.startAutoOffListening(boardId)
                         }
                     } else if (user == null) {
                         firebaseRepo.stopListening()
@@ -209,12 +230,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appPreferences.collect { prefs ->
                 if (isVisible && _currentUser.value != null && !_isDemoMode.value) {
                     firebaseRepo.startListening(prefs.boardId)
-                    if (isSchedulesOpen) {
-                        firebaseRepo.startSchedulesListening(prefs.boardId)
+                    firebaseRepo.startSchedulesListening(prefs.boardId)
+                    if (isAutoOffTabVisible) {
+                        firebaseRepo.startAutoOffListening(prefs.boardId)
                     }
-                }
-                if (prefs.biometricLockEnabled && backgroundTimestamp == 0L) {
-                    _isAppLocked.value = true
                 }
             }
         }
@@ -223,6 +242,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onAppStart() {
         if (appPreferences.value.biometricLockEnabled) {
             _isAppLocked.value = true
+        } else {
+            viewModelScope.launch {
+                if (prefsRepo.preferencesFlow.first().biometricLockEnabled) {
+                    _isAppLocked.value = true
+                }
+            }
         }
     }
 
@@ -239,8 +264,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_currentUser.value != null && !_isDemoMode.value) {
             val boardId = appPreferences.value.boardId
             firebaseRepo.startListening(boardId)
-            if (isSchedulesOpen) {
-                firebaseRepo.startSchedulesListening(boardId)
+            firebaseRepo.startSchedulesListening(boardId)
+            if (isAutoOffTabVisible) {
+                firebaseRepo.startAutoOffListening(boardId)
             }
         }
     }
@@ -292,7 +318,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _isDemoMode.value = false
                 _loginError.value = null
                 if (isVisible) {
-                    firebaseRepo.startListening(appPreferences.value.boardId)
+                    val boardId = appPreferences.value.boardId
+                    firebaseRepo.startListening(boardId)
+                    firebaseRepo.startSchedulesListening(boardId)
                 }
             }.onFailure { error ->
                 val msg = error.message ?: ""
@@ -419,6 +447,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (updates.isEmpty()) return
 
+        val visibility = switchVisibility.value
+        for (id in 1..4) {
+            if (visibility[id] == false) {
+                updates.remove("relay$id")
+            }
+        }
+
+        if (updates.isEmpty()) {
+            viewModelScope.launch {
+                _snackbarEvents.emit(
+                    UiSnackbarEvent.ShowMessage(
+                        getApplication<Application>().getString(com.example.R.string.scene_only_controls_hidden_switches)
+                    )
+                )
+            }
+            return
+        }
+
         if (_isDemoMode.value) {
             _demoRelayStates.value = _demoRelayStates.value + updates
             com.example.widget.SwitchboardWidgetProvider.updateAllWidgets(getApplication())
@@ -460,6 +506,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateSwitchVisibility(id: Int, visible: Boolean) {
         viewModelScope.launch {
             prefsRepo.updateSwitchVisibility(id, visible)
+            com.example.widget.SwitchboardWidgetProvider.updateAllWidgets(getApplication())
         }
     }
 
@@ -500,8 +547,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun restoreBackup(payload: com.example.util.BackupPayload) {
         viewModelScope.launch {
             prefsRepo.applyBackup(payload)
+            com.example.widget.SwitchboardWidgetProvider.updateAllWidgets(getApplication())
             if (isVisible && _currentUser.value != null && !_isDemoMode.value) {
                 firebaseRepo.startListening(payload.boardId)
+                firebaseRepo.startSchedulesListening(payload.boardId)
             }
         }
     }
@@ -575,20 +624,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             prefsRepo.updateBoardId(sanitized)
             if (isVisible && _currentUser.value != null && !_isDemoMode.value) {
                 firebaseRepo.startListening(sanitized)
-                if (isSchedulesOpen) {
-                    firebaseRepo.startSchedulesListening(sanitized)
-                }
+                firebaseRepo.startSchedulesListening(sanitized)
             }
         }
     }
 
     fun setSchedulesSheetOpen(open: Boolean) {
         isSchedulesOpen = open
+        if (!open) {
+            isAutoOffTabVisible = false
+            firebaseRepo.stopAutoOffListening()
+        }
         if (_isDemoMode.value) return
         if (open && isVisible && _currentUser.value != null) {
             firebaseRepo.startSchedulesListening(appPreferences.value.boardId)
+        }
+    }
+
+    fun setAutoOffTabVisible(visible: Boolean) {
+        isAutoOffTabVisible = visible
+        if (_isDemoMode.value) return
+        if (visible && isVisible && _currentUser.value != null) {
+            firebaseRepo.startAutoOffListening(appPreferences.value.boardId)
         } else {
-            firebaseRepo.stopSchedulesListening()
+            firebaseRepo.stopAutoOffListening()
         }
     }
 
@@ -643,6 +702,99 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _snackbarEvents.emit(
                     UiSnackbarEvent.ShowMessage("Failed to delete schedule: ${err.localizedMessage ?: "Unknown error"}")
                 )
+            }
+        }
+    }
+
+    fun setSchedulesEnabled(ids: List<String>, enabled: Boolean) {
+        val cleanIds = ids.filter { it.isNotBlank() }.toSet()
+        if (cleanIds.isEmpty()) return
+
+        if (_isDemoMode.value) {
+            _demoSchedules.value = _demoSchedules.value.map { item ->
+                if (item.id in cleanIds) item.copy(enabled = enabled) else item
+            }
+            return
+        }
+
+        if (!isConnected.value) {
+            showMessage("Cannot update schedules: No internet connection")
+            return
+        }
+
+        val boardId = appPreferences.value.boardId
+        viewModelScope.launch {
+            val result = firebaseRepo.setSchedulesEnabled(boardId, cleanIds.toList(), enabled)
+            result.onFailure { err ->
+                _snackbarEvents.emit(
+                    UiSnackbarEvent.ShowMessage("Failed to update schedules: ${err.localizedMessage ?: "Unknown error"}")
+                )
+            }
+        }
+    }
+
+    fun deleteSchedules(ids: List<String>) {
+        val cleanIds = ids.filter { it.isNotBlank() }.toSet()
+        if (cleanIds.isEmpty()) return
+
+        if (_isDemoMode.value) {
+            _demoSchedules.value = _demoSchedules.value.filterNot { it.id in cleanIds }
+            return
+        }
+
+        if (!isConnected.value) {
+            showMessage("Cannot delete schedules: No internet connection")
+            return
+        }
+
+        val boardId = appPreferences.value.boardId
+        viewModelScope.launch {
+            val result = firebaseRepo.deleteSchedules(boardId, cleanIds.toList())
+            result.onFailure { err ->
+                _snackbarEvents.emit(
+                    UiSnackbarEvent.ShowMessage("Failed to delete schedules: ${err.localizedMessage ?: "Unknown error"}")
+                )
+            }
+        }
+    }
+
+    fun runScheduleNow(schedule: ScheduleItem) {
+        val relayId = schedule.relay
+        if (switchVisibility.value[relayId] == false) return
+        val relay = switches.value.find { it.id == relayId } ?: return
+        val targetState = schedule.action
+        val key = relay.relayKey
+        val actionWord = if (targetState) "ON" else "OFF"
+
+        if (_isDemoMode.value) {
+            _demoRelayStates.value = _demoRelayStates.value + (key to targetState)
+            com.example.widget.SwitchboardWidgetProvider.updateAllWidgets(getApplication())
+            showMessage("${relay.name} turned $actionWord")
+            return
+        }
+
+        if (!isConnected.value) {
+            showMessage("Cannot toggle: No internet connection")
+            return
+        }
+
+        val boardId = appPreferences.value.boardId
+        _optimisticOverrides.value = _optimisticOverrides.value + (key to targetState)
+        _pendingRelays.value = _pendingRelays.value + key
+
+        viewModelScope.launch {
+            val result = firebaseRepo.setRelayValue(boardId, key, targetState)
+            _pendingRelays.value = _pendingRelays.value - key
+
+            result.onFailure { error ->
+                _optimisticOverrides.value = _optimisticOverrides.value - key
+                _snackbarEvents.emit(
+                    UiSnackbarEvent.ShowMessage("Failed to update ${relay.name}: ${error.localizedMessage ?: "Unknown error"}")
+                )
+            }.onSuccess {
+                _optimisticOverrides.value = _optimisticOverrides.value - key
+                com.example.widget.SwitchboardWidgetProvider.updateAllWidgets(getApplication())
+                _snackbarEvents.emit(UiSnackbarEvent.ShowMessage("${relay.name} turned $actionWord"))
             }
         }
     }

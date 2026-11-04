@@ -572,6 +572,63 @@ object AppIcons {
         }
     }
 
+    val MoreVert: ImageVector by lazy {
+        buildIcon("MoreVert") {
+            moveTo(12f, 8f)
+            curveTo(13.1f, 8f, 14f, 7.1f, 14f, 6f)
+            curveTo(14f, 4.9f, 13.1f, 4f, 12f, 4f)
+            curveTo(10.9f, 4f, 10f, 4.9f, 10f, 6f)
+            curveTo(10f, 7.1f, 10.9f, 8f, 12f, 8f)
+            close()
+            moveTo(12f, 10f)
+            curveTo(10.9f, 10f, 10f, 10.9f, 10f, 12f)
+            curveTo(10f, 13.1f, 10.9f, 14f, 12f, 14f)
+            curveTo(13.1f, 14f, 14f, 13.1f, 14f, 12f)
+            curveTo(14f, 10.9f, 13.1f, 10f, 12f, 10f)
+            close()
+            moveTo(12f, 16f)
+            curveTo(10.9f, 16f, 10f, 16.9f, 10f, 18f)
+            curveTo(10f, 19.1f, 10.9f, 20f, 12f, 20f)
+            curveTo(13.1f, 20f, 14f, 19.1f, 14f, 18f)
+            curveTo(14f, 16.9f, 13.1f, 16f, 12f, 16f)
+            close()
+        }
+    }
+
+    val Alarm: ImageVector by lazy {
+        buildIcon("Alarm") {
+            moveTo(7.88f, 3.39f)
+            lineTo(6.6f, 1.86f)
+            lineTo(2f, 5.71f)
+            lineTo(3.29f, 7.24f)
+            close()
+            moveTo(22f, 5.72f)
+            lineTo(17.4f, 1.86f)
+            lineTo(16.11f, 3.39f)
+            lineTo(20.71f, 7.25f)
+            close()
+            moveTo(12f, 4f)
+            curveTo(7.03f, 4f, 3f, 8.03f, 3f, 13f)
+            curveTo(3f, 17.97f, 7.02f, 22f, 12f, 22f)
+            curveTo(16.97f, 22f, 21f, 17.97f, 21f, 13f)
+            curveTo(21f, 8.03f, 16.97f, 4f, 12f, 4f)
+            close()
+            moveTo(12f, 20f)
+            curveTo(8.13f, 20f, 5f, 16.87f, 5f, 13f)
+            curveTo(5f, 9.13f, 8.13f, 6f, 12f, 6f)
+            curveTo(15.87f, 6f, 19f, 9.13f, 19f, 13f)
+            curveTo(19f, 16.87f, 15.87f, 20f, 12f, 20f)
+            close()
+            moveTo(12.5f, 8f)
+            lineTo(11f, 8f)
+            lineTo(11f, 14f)
+            lineTo(15.75f, 16.85f)
+            lineTo(16.5f, 15.62f)
+            lineTo(12.5f, 13.25f)
+            close()
+        }
+    }
+
     fun getSwitchIcon(iconKey: String): ImageVector {
         return when (iconKey.lowercase()) {
             "bulb" -> Bulb

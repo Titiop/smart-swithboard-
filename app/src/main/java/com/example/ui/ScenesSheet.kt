@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -62,7 +63,8 @@ fun ScenesSheet(
     onApplyScene: (SceneItem) -> Unit,
     onSaveScene: (SceneItem) -> Unit,
     onDeleteScene: (String) -> Unit,
-    onMoveScene: (fromIndex: Int, toIndex: Int) -> Unit
+    onMoveScene: (fromIndex: Int, toIndex: Int) -> Unit,
+    switchVisibility: Map<Int, Boolean> = mapOf(1 to true, 2 to true, 3 to true, 4 to true)
 ) {
     val extraColors = LocalSwitchboardColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -164,7 +166,8 @@ fun ScenesSheet(
             onConfirm = { updated ->
                 onSaveScene(updated)
                 editingScene = null
-            }
+            },
+            switchVisibility = switchVisibility
         )
     }
 
@@ -308,7 +311,8 @@ fun SceneEditorDialog(
     initialScene: SceneItem,
     switches: List<SwitchRelay>,
     onDismiss: () -> Unit,
-    onConfirm: (SceneItem) -> Unit
+    onConfirm: (SceneItem) -> Unit,
+    switchVisibility: Map<Int, Boolean> = mapOf(1 to true, 2 to true, 3 to true, 4 to true)
 ) {
     val extraColors = LocalSwitchboardColors.current
     var name by remember { mutableStateOf(initialScene.name) }
@@ -344,20 +348,28 @@ fun SceneEditorDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Switch 1
-                val s1Name = switches.find { it.id == 1 }?.name ?: "Switch 1"
-                SwitchActionRow(label = s1Name, state = r1, onStateChange = { r1 = it })
+                val s1Hidden = switchVisibility[1] == false
+                val s1Base = switches.find { it.id == 1 }?.name ?: "Switch 1"
+                val s1Name = if (s1Hidden) "$s1Base (hidden)" else s1Base
+                SwitchActionRow(label = s1Name, state = r1, onStateChange = { r1 = it }, isHidden = s1Hidden)
 
                 // Switch 2
-                val s2Name = switches.find { it.id == 2 }?.name ?: "Switch 2"
-                SwitchActionRow(label = s2Name, state = r2, onStateChange = { r2 = it })
+                val s2Hidden = switchVisibility[2] == false
+                val s2Base = switches.find { it.id == 2 }?.name ?: "Switch 2"
+                val s2Name = if (s2Hidden) "$s2Base (hidden)" else s2Base
+                SwitchActionRow(label = s2Name, state = r2, onStateChange = { r2 = it }, isHidden = s2Hidden)
 
                 // Switch 3
-                val s3Name = switches.find { it.id == 3 }?.name ?: "Switch 3"
-                SwitchActionRow(label = s3Name, state = r3, onStateChange = { r3 = it })
+                val s3Hidden = switchVisibility[3] == false
+                val s3Base = switches.find { it.id == 3 }?.name ?: "Switch 3"
+                val s3Name = if (s3Hidden) "$s3Base (hidden)" else s3Base
+                SwitchActionRow(label = s3Name, state = r3, onStateChange = { r3 = it }, isHidden = s3Hidden)
 
                 // Switch 4
-                val s4Name = switches.find { it.id == 4 }?.name ?: "Switch 4"
-                SwitchActionRow(label = s4Name, state = r4, onStateChange = { r4 = it })
+                val s4Hidden = switchVisibility[4] == false
+                val s4Base = switches.find { it.id == 4 }?.name ?: "Switch 4"
+                val s4Name = if (s4Hidden) "$s4Base (hidden)" else s4Base
+                SwitchActionRow(label = s4Name, state = r4, onStateChange = { r4 = it }, isHidden = s4Hidden)
             }
         },
         confirmButton = {
@@ -394,14 +406,16 @@ fun SceneEditorDialog(
 fun SwitchActionRow(
     label: String,
     state: Boolean?,
-    onStateChange: (Boolean?) -> Unit
+    onStateChange: (Boolean?) -> Unit,
+    isHidden: Boolean = false
 ) {
     val extraColors = LocalSwitchboardColors.current
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .alpha(if (isHidden) 0.55f else 1f),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -409,7 +423,7 @@ fun SwitchActionRow(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
-            color = extraColors.textPrimary,
+            color = if (isHidden) extraColors.textSecondary else extraColors.textPrimary,
             modifier = Modifier.weight(1f)
         )
 

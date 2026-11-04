@@ -49,6 +49,23 @@ class ShortcutTrampolineActivity : FragmentActivity() {
         CoroutineScope(Dispatchers.Main).launch {
             val prefs = PreferencesRepository(applicationContext)
             val appPrefs = prefs.preferencesFlow.first()
+            val visibility = prefs.switchVisibilityFlow.first()
+            val updates = mutableMapOf<String, Boolean>()
+            for (id in 1..4) {
+                if (visibility[id] != false) {
+                    updates["relay$id"] = targetOn
+                }
+            }
+
+            if (updates.isEmpty()) {
+                Toast.makeText(
+                    this@ShortcutTrampolineActivity,
+                    getString(R.string.all_switches_hidden_toast),
+                    Toast.LENGTH_SHORT
+                ).show()
+                finish()
+                return@launch
+            }
 
             if (appPrefs.biometricLockEnabled && appPrefs.requireExternalUnlock) {
                 BiometricHelper.showBiometricPrompt(
@@ -57,7 +74,7 @@ class ShortcutTrampolineActivity : FragmentActivity() {
                     subtitle = getString(R.string.biometric_prompt_subtitle),
                     onSuccess = {
                         CoroutineScope(Dispatchers.Main).launch {
-                            executeShortcutAction(appPrefs.boardId, targetOn)
+                            executeShortcutAction(appPrefs.boardId, targetOn, updates)
                         }
                     },
                     onError = {
@@ -65,21 +82,27 @@ class ShortcutTrampolineActivity : FragmentActivity() {
                     }
                 )
             } else {
-                executeShortcutAction(appPrefs.boardId, targetOn)
+                executeShortcutAction(appPrefs.boardId, targetOn, updates)
             }
         }
     }
 
-    private suspend fun executeShortcutAction(boardId: String, targetOn: Boolean) {
+    private suspend fun executeShortcutAction(
+        boardId: String,
+        targetOn: Boolean,
+        updates: Map<String, Boolean>
+    ) {
+        if (updates.isEmpty()) {
+            Toast.makeText(
+                applicationContext,
+                getString(R.string.all_switches_hidden_toast),
+                Toast.LENGTH_SHORT
+            ).show()
+            finish()
+            return
+        }
         try {
             withTimeout(8000L) {
-                val updates = mapOf(
-                    "relay1" to targetOn,
-                    "relay2" to targetOn,
-                    "relay3" to targetOn,
-                    "relay4" to targetOn
-                )
-
                 FirebaseDatabase.getInstance()
                     .getReference(boardId)
                     .updateChildren(updates as Map<String, Any>)

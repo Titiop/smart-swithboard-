@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +36,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,14 +48,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import android.text.format.DateFormat
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.data.model.ScheduleItem
 import com.example.data.model.SwitchRelay
 import com.example.ui.icons.AppIcons
 import com.example.ui.theme.LocalSwitchboardColors
@@ -71,14 +80,32 @@ fun EditSwitchSheet(
     onStartTimer: (action: Boolean, minutes: Int) -> Unit = { _, _ -> },
     onCancelTimer: () -> Unit = {},
     onFetchAutoOffMinutes: suspend () -> Int = { 0 },
-    onSaveAutoOffMinutes: (Int) -> Unit = {}
+    onSaveAutoOffMinutes: (Int) -> Unit = {},
+    onTurnOffSwitch: () -> Unit = {},
+    schedules: List<ScheduleItem> = emptyList(),
+    allSwitches: List<SwitchRelay> = emptyList(),
+    onSaveSchedule: (ScheduleItem, Boolean) -> Unit = { _, _ -> },
+    onToggleScheduleEnabled: (ScheduleItem, Boolean) -> Unit = { _, _ -> },
+    onDeleteSchedule: (String) -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val is24Hour = remember(context) { DateFormat.is24HourFormat(context) }
     val extraColors = LocalSwitchboardColors.current
     var name by remember { mutableStateOf(relay.name) }
     var selectedIcon by remember { mutableStateOf(relay.iconKey) }
     var isVisible by remember { mutableStateOf(initialVisible) }
+    var showHideWhileOnDialog by remember { mutableStateOf(false) }
+    var showAddScheduleDialog by remember { mutableStateOf(false) }
+    var scheduleToDelete by remember { mutableStateOf<ScheduleItem?>(null) }
+
+    val switchSchedules = remember(schedules, relay.id) {
+        schedules.filter { it.relay == relay.id }.sortedBy { it.minute }
+    }
+    val activeSchedulesCount = remember(switchSchedules) { switchSchedules.count { it.enabled } }
+    val pausedSchedulesCount = remember(switchSchedules) { switchSchedules.size - activeSchedulesCount }
 
     // Timer state
+    val focusManager = LocalFocusManager.current
     var timerAction by remember { mutableStateOf(false) } // false = Turn OFF after, true = Turn ON after
     var customTimerMinutes by remember { mutableStateOf("") }
 
@@ -305,7 +332,11 @@ fun EditSwitchSheet(
                     120 to "2 h"
                 ).forEach { (mins, labelText) ->
                     OutlinedButton(
-                        onClick = { onStartTimer(timerAction, mins) },
+                        onClick = {
+                            customTimerMinutes = ""
+                            focusManager.clearFocus()
+                            onStartTimer(timerAction, mins)
+                        },
                         enabled = isConnected,
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
@@ -354,8 +385,9 @@ fun EditSwitchSheet(
                 Button(
                     onClick = {
                         if (parsedCustomMins != null && parsedCustomMins in 1..1440) {
-                            onStartTimer(timerAction, parsedCustomMins)
                             customTimerMinutes = ""
+                            focusManager.clearFocus()
+                            onStartTimer(timerAction, parsedCustomMins)
                         }
                     },
                     enabled = isConnected && isValidCustom,
@@ -370,6 +402,149 @@ fun EditSwitchSheet(
                 ) {
                     Text(stringResource(R.string.timer_start))
                 }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Schedules for this switch Section
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.schedules_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = extraColors.textPrimary
+                )
+                Text(
+                    text = "$activeSchedulesCount active · $pausedSchedulesCount paused",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = extraColors.textSecondary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (switchSchedules.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.edit_switch_schedules_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = extraColors.textSecondary,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            } else {
+                val everyDayLabel = stringResource(R.string.schedule_every_day)
+                val weekdaysLabel = stringResource(R.string.schedule_weekdays)
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    switchSchedules.forEach { sched ->
+                        val timeText = formatMinuteOfDay(sched.minute, is24Hour)
+                        val daysSummary = formatScheduleDaysSummary(sched.days, everyDayLabel, weekdaysLabel)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .alpha(if (sched.enabled) 1f else 0.6f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(extraColors.offCard)
+                                .border(1.dp, extraColors.cardBorder, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = timeText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = extraColors.textPrimary
+                                    )
+                                    Text(
+                                        text = if (sched.action) "ON" else "OFF",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (sched.action) extraColors.brandAccent else Color(0xFFFF6B6B)
+                                    )
+                                }
+                                Text(
+                                    text = daysSummary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = extraColors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            ) {
+                                Switch(
+                                    checked = sched.enabled,
+                                    onCheckedChange = { enabled ->
+                                        onToggleScheduleEnabled(sched, enabled)
+                                    },
+                                    enabled = isConnected,
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFF0E1013),
+                                        checkedTrackColor = extraColors.brandAccent
+                                    )
+                                )
+                                Text(
+                                    text = if (sched.enabled) stringResource(R.string.schedule_status_active) else stringResource(R.string.schedule_status_paused),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 9.sp,
+                                    color = if (sched.enabled) extraColors.brandAccent else extraColors.textSecondary
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { scheduleToDelete = sched },
+                                enabled = isConnected,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = AppIcons.Delete,
+                                    contentDescription = "Delete schedule",
+                                    tint = if (isConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = { showAddScheduleDialog = true },
+                enabled = isConnected,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("edit_switch_add_schedule_button")
+            ) {
+                Icon(
+                    imageVector = AppIcons.Add,
+                    contentDescription = null,
+                    tint = extraColors.brandAccent,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.edit_switch_add_schedule),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = extraColors.textPrimary
+                )
             }
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -439,8 +614,12 @@ fun EditSwitchSheet(
 
                 Button(
                     onClick = {
-                        onSaveVisibility(isVisible)
-                        onSave(name.trim().ifEmpty { "Switch ${relay.id}" }, selectedIcon)
+                        if (!isVisible && relay.isOn) {
+                            showHideWhileOnDialog = true
+                        } else {
+                            onSaveVisibility(isVisible)
+                            onSave(name.trim().ifEmpty { "Switch ${relay.id}" }, selectedIcon)
+                        }
                     },
                     modifier = Modifier
                         .weight(1f)
@@ -456,5 +635,106 @@ fun EditSwitchSheet(
                 }
             }
         }
+    }
+
+    if (showHideWhileOnDialog) {
+        val resolvedName = name.trim().ifEmpty { "Switch ${relay.id}" }
+        AlertDialog(
+            onDismissRequest = { showHideWhileOnDialog = false },
+            title = {
+                Text(text = stringResource(R.string.hide_on_switch_dialog_title))
+            },
+            text = {
+                Text(text = stringResource(R.string.hide_on_switch_dialog_message))
+            },
+            confirmButton = {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = {
+                            showHideWhileOnDialog = false
+                            onSaveVisibility(false)
+                            onSave(resolvedName, selectedIcon)
+                        },
+                        modifier = Modifier.testTag("hide_only_button")
+                    ) {
+                        Text(stringResource(R.string.hide_on_switch_hide_only))
+                    }
+                    Button(
+                        onClick = {
+                            showHideWhileOnDialog = false
+                            onTurnOffSwitch()
+                            onSaveVisibility(false)
+                            onSave(resolvedName, selectedIcon)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = extraColors.brandAccent,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier.testTag("turn_off_and_hide_button")
+                    ) {
+                        Text(stringResource(R.string.hide_on_switch_turn_off_and_hide))
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showHideWhileOnDialog = false },
+                    modifier = Modifier.testTag("cancel_hide_dialog_button")
+                ) {
+                    Text(stringResource(R.string.hide_on_switch_cancel))
+                }
+            }
+        )
+    }
+
+    if (showAddScheduleDialog) {
+        val switchesForEditor = if (allSwitches.isNotEmpty()) allSwitches else listOf(relay)
+        ScheduleEditorDialog(
+            initialSchedule = ScheduleItem(
+                id = "",
+                relay = relay.id,
+                action = true,
+                minute = 8 * 60,
+                days = 127,
+                enabled = true,
+                label = ""
+            ),
+            isNew = true,
+            switches = switchesForEditor,
+            is24Hour = is24Hour,
+            onDismiss = { showAddScheduleDialog = false },
+            onConfirm = { newSchedule ->
+                onSaveSchedule(newSchedule, true)
+                showAddScheduleDialog = false
+            },
+            preselectedRelay = relay.id
+        )
+    }
+
+    scheduleToDelete?.let { item ->
+        AlertDialog(
+            onDismissRequest = { scheduleToDelete = null },
+            title = { Text(stringResource(R.string.schedule_delete_title)) },
+            text = { Text(stringResource(R.string.schedule_delete_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteSchedule(item.id)
+                        scheduleToDelete = null
+                    },
+                    enabled = isConnected
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { scheduleToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

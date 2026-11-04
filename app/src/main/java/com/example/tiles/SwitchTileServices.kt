@@ -25,17 +25,36 @@ abstract class BaseSwitchTileService(private val relayId: Int) : TileService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var isRelayOn: Boolean = false
+    private var isSwitchVisible: Boolean = true
     private var switchName: String = "Switch $relayId"
     private var boardId: String = "switchboard1"
 
     override fun onStartListening() {
         super.onStartListening()
         serviceScope.launch {
+            val prefs = PreferencesRepository(applicationContext)
+            val names = runCatching { prefs.switchNamesFlow.first() }.getOrDefault(emptyMap())
+            switchName = names[relayId] ?: "Switch $relayId"
+            val visibility = runCatching { prefs.switchVisibilityFlow.first() }.getOrDefault(emptyMap())
+            isSwitchVisible = visibility[relayId] != false
+
+            if (!isSwitchVisible) {
+                qsTile?.apply {
+                    state = Tile.STATE_UNAVAILABLE
+                    label = switchName
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        subtitle = getString(R.string.tile_hidden)
+                    }
+                    updateTile()
+                }
+                return@launch
+            }
+
             val auth = try { FirebaseAuth.getInstance() } catch (_: Exception) { null }
             if (auth?.currentUser == null) {
                 qsTile?.apply {
                     state = Tile.STATE_INACTIVE
-                    label = "Switch $relayId"
+                    label = switchName
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         subtitle = "Tap to login"
                     }
@@ -45,9 +64,6 @@ abstract class BaseSwitchTileService(private val relayId: Int) : TileService() {
             }
 
             try {
-                val prefs = PreferencesRepository(applicationContext)
-                val names = prefs.switchNamesFlow.first()
-                switchName = names[relayId] ?: "Switch $relayId"
                 boardId = prefs.preferencesFlow.first().boardId
 
                 // Read value with a single get() when tile becomes visible
@@ -75,6 +91,8 @@ abstract class BaseSwitchTileService(private val relayId: Int) : TileService() {
 
     override fun onClick() {
         super.onClick()
+        if (!isSwitchVisible) return
+
         val auth = try { FirebaseAuth.getInstance() } catch (_: Exception) { null }
         if (auth?.currentUser == null) {
             val launchIntent = Intent(this, MainActivity::class.java).apply {
@@ -106,8 +124,23 @@ abstract class BaseSwitchTileService(private val relayId: Int) : TileService() {
         }
 
         serviceScope.launch {
+            val prefs = PreferencesRepository(applicationContext)
+            val visibility = runCatching { prefs.switchVisibilityFlow.first() }.getOrDefault(emptyMap())
+            isSwitchVisible = visibility[relayId] != false
+            if (!isSwitchVisible) {
+                qsTile?.apply {
+                    state = Tile.STATE_UNAVAILABLE
+                    label = switchName
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        subtitle = getString(R.string.tile_hidden)
+                    }
+                    updateTile()
+                }
+                return@launch
+            }
+
             val appPrefs = runCatching {
-                PreferencesRepository(applicationContext).preferencesFlow.first()
+                prefs.preferencesFlow.first()
             }.getOrNull()
             boardId = appPrefs?.boardId ?: boardId
 
